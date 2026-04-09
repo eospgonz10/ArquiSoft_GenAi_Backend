@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.arquisoft.genai.application.usecase.AuthUseCaseTest
+-------------------------------------------------------------------------------
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.370 s -- in com.arquisoft.genai.application.usecase.AuthUseCaseTest

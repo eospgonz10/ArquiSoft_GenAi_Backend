@@ -1,0 +1,23 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    database-platform: org.hibernate.dialect.H2Dialect
+    show-sql: false
+
+jwt:
+  secret: dGVzdHNlY3JldGtleWZvcnVuaXR0ZXN0aW5nb25seW5vdHByb2R1Y3Rpb24=
+  expiration-ms: 86400000
+
+openai:
+  api-key: test-key
+  model: gpt-4o-mini
+  max-retries: 0
+
+ai:
+  provider: mock
