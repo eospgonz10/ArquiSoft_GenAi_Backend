@@ -32,8 +32,18 @@ openai:
   model: ${OPENAI_MODEL:gpt-4o-mini}
   max-retries: ${OPENAI_MAX_RETRIES:2}
 
+gemini:
+  api-key: ${GEMINI_API_KEY:your-gemini-api-key-here}
+  model: ${GEMINI_MODEL:gemini-2.0-flash}
+  max-retries: ${GEMINI_MAX_RETRIES:2}
+
+groq:
+  api-key: ${GROQ_API_KEY:your-groq-api-key-here}
+  model: ${GROQ_MODEL:llama-3.3-70b-versatile}
+  max-retries: ${GROQ_MAX_RETRIES:2}
+
 ai:
-  provider: ${AI_PROVIDER:openai}  # 'openai' or 'mock'
+  provider: ${AI_PROVIDER:openai}  # 'openai', 'gemini', 'groq', or 'mock'
 
 springdoc:
   api-docs:

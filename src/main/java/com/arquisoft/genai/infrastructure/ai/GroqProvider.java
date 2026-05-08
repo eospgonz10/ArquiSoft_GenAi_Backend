@@ -22,18 +22,21 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * OpenAI GPT-4o-mini provider implementation.
- * Activated when ai.provider=openai (default).
+ * Groq AI provider implementation (OpenAI-compatible API).
+ * Activated when ai.provider=groq.
+ *
+ * Free tier: ~6,000 TPM for llama-3.1-8b-instant — no credit card required.
+ * API docs: https://console.groq.com/docs/openai
  */
 @Component
-@ConditionalOnProperty(name = "ai.provider", havingValue = "openai", matchIfMissing = true)
+@ConditionalOnProperty(name = "ai.provider", havingValue = "groq")
 @RequiredArgsConstructor
 @Slf4j
-public class OpenAiProvider implements AiProvider {
+public class GroqProvider implements AiProvider {
 
-    private static final String OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+    private static final String GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-    // Concise prompt to minimize token usage
+    // Concise prompt (~250 tokens vs ~800 before) to stay within 6,000 TPM free limit
     private static final String SYSTEM_PROMPT =
             "You are a software architect. Given domain, quality attributes and tech constraints, " +
             "return ONLY a valid JSON with these fields: " +
@@ -42,21 +45,23 @@ public class OpenAiProvider implements AiProvider {
             "documentation (markdown string), techStack (string[]), decisions (string[]). " +
             "No markdown fences, no extra text outside the JSON.";
 
-    /** Extracts seconds from OpenAI's rate-limit header/body: "Please try again in Xs" */
+    /** Extracts seconds from Groq's rate-limit message: "Please try again in X.XXXs" */
     private static final Pattern RETRY_SECONDS_PATTERN =
             Pattern.compile("try again in ([\\d.]+)s");
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${openai.api-key}")
+    @Value("${groq.api-key}")
     private String apiKey;
 
-    @Value("${openai.model:gpt-4o-mini}")
+    @Value("${groq.model:llama-3.1-8b-instant}")
     private String model;
 
-    @Value("${openai.max-retries:1}")
+    @Value("${groq.max-retries:1}")  // 1 retry: fewer = less quota burned
     private int maxRetries;
+
+    // ── AiProvider ────────────────────────────────────────────────────────────
 
     @Override
     public ArchitectureOutput generate(ArchitectureInput input) {
@@ -65,31 +70,34 @@ public class OpenAiProvider implements AiProvider {
 
         for (int attempt = 1; attempt <= maxRetries + 1; attempt++) {
             try {
-                log.info("Calling OpenAI API (attempt {}/{}), model: {}", attempt, maxRetries + 1, model);
-                String content = callOpenAi(userPrompt);
+                log.info("Calling Groq API (attempt {}/{}), model: {}", attempt, maxRetries + 1, model);
+                String content = callGroq(userPrompt);
                 return parseResponse(content);
             } catch (RateLimitException e) {
-                lastException = new AiProviderException("OpenAI rate limited: " + e.getMessage());
+                // 429: wait exactly what Groq tells us + 2s buffer, then retry
+                lastException = new AiProviderException("Groq rate limited: " + e.getMessage());
                 if (attempt <= maxRetries) {
                     long waitMs = e.retryAfterMs + 2000L;
-                    log.warn("OpenAI rate limited (attempt {}). Waiting {}ms before retry...", attempt, waitMs);
+                    log.warn("Groq rate limited (attempt {}). Waiting {}ms before retry...", attempt, waitMs);
                     sleep(waitMs);
                 } else {
-                    log.error("OpenAI rate limited on all {} attempts. Giving up.", maxRetries + 1);
+                    log.error("Groq rate limited on all {} attempts. Giving up.", maxRetries + 1);
                 }
             } catch (AiProviderException e) {
                 lastException = e;
-                log.warn("OpenAI attempt {} failed: {}", attempt, e.getMessage());
+                log.warn("Groq attempt {} failed: {}", attempt, e.getMessage());
                 if (attempt <= maxRetries) {
                     sleep(1000L * attempt);
                 }
             }
         }
         throw lastException != null ? lastException
-                : new AiProviderException("OpenAI failed after " + (maxRetries + 1) + " attempts");
+                : new AiProviderException("Groq failed after " + (maxRetries + 1) + " attempts");
     }
 
-    private String callOpenAi(String userPrompt) {
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private String callGroq(String userPrompt) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.setBearerAuth(apiKey);
@@ -101,17 +109,18 @@ public class OpenAiProvider implements AiProvider {
                         new OpenAiMessage("user", userPrompt)
                 ))
                 .temperature(0.3)
-                .maxTokens(1024)
+                .maxTokens(512)  // keep within 6,000 TPM free tier
                 .build();
 
         try {
             ResponseEntity<JsonNode> response = restTemplate.exchange(
-                    OPENAI_API_URL, HttpMethod.POST,
+                    GROQ_API_URL,
+                    HttpMethod.POST,
                     new HttpEntity<>(body, headers),
                     JsonNode.class);
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                throw new AiProviderException("OpenAI returned status: " + response.getStatusCode());
+                throw new AiProviderException("Groq returned status: " + response.getStatusCode());
             }
 
             String content = response.getBody()
@@ -120,32 +129,40 @@ public class OpenAiProvider implements AiProvider {
                     .asText("");
 
             if (content.isBlank()) {
-                throw new AiProviderException("OpenAI returned empty content");
+                throw new AiProviderException("Groq returned empty content");
             }
             return content;
 
         } catch (HttpClientErrorException.TooManyRequests e) {
+            // Parse the exact retry delay Groq suggests and propagate it
             long retryMs = parseRetryDelayMs(e.getResponseBodyAsString());
-            log.warn("OpenAI 429 — suggested retry delay: {}ms", retryMs);
+            log.warn("Groq 429 — suggested retry delay: {}ms", retryMs);
             throw new RateLimitException(e.getMessage(), retryMs);
+
         } catch (AiProviderException | RateLimitException e) {
             throw e;
         } catch (Exception e) {
-            throw new AiProviderException("Network/API error calling OpenAI: " + e.getMessage(), e);
+            throw new AiProviderException("Network/API error calling Groq: " + e.getMessage(), e);
         }
     }
 
+    /**
+     * Extracts the retry delay (ms) from Groq's 429 body.
+     * Falls back to 60 seconds if the pattern is not found.
+     */
     private long parseRetryDelayMs(String responseBody) {
         if (responseBody != null) {
             Matcher m = RETRY_SECONDS_PATTERN.matcher(responseBody);
             if (m.find()) {
                 try {
                     double seconds = Double.parseDouble(m.group(1));
-                    return Math.max((long) (seconds * 1000), 62_000L);
+                    // Ensure we wait at least 62s so the full 1-min TPM window resets
+                    long parsed = (long) (seconds * 1000);
+                    return Math.max(parsed, 62_000L);
                 } catch (NumberFormatException ignored) { }
             }
         }
-        return 62_000L;
+        return 62_000L; // default: wait full window reset
     }
 
     private ArchitectureOutput parseResponse(String rawContent) {
@@ -161,7 +178,7 @@ public class OpenAiProvider implements AiProvider {
                     .decisions(parseList(node.path("decisions")))
                     .build();
         } catch (Exception e) {
-            throw new AiProviderException("Failed to parse OpenAI JSON response: " + e.getMessage(), e);
+            throw new AiProviderException("Failed to parse Groq JSON response: " + e.getMessage(), e);
         }
     }
 
@@ -207,6 +224,7 @@ public class OpenAiProvider implements AiProvider {
         try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
     }
 
+    /** Internal exception carrying the rate-limit retry delay. */
     private static class RateLimitException extends RuntimeException {
         final long retryAfterMs;
         RateLimitException(String message, long retryAfterMs) {

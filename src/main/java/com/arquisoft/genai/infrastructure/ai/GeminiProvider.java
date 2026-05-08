@@ -4,8 +4,8 @@ import com.arquisoft.genai.application.exception.AiProviderException;
 import com.arquisoft.genai.application.model.ArchitectureInput;
 import com.arquisoft.genai.application.model.ArchitectureOutput;
 import com.arquisoft.genai.application.port.AiProvider;
-import com.arquisoft.genai.infrastructure.ai.dto.OpenAiMessage;
-import com.arquisoft.genai.infrastructure.ai.dto.OpenAiRequest;
+import com.arquisoft.genai.infrastructure.ai.dto.GeminiRequest;
+import com.arquisoft.genai.infrastructure.ai.dto.GeminiRequest.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -22,16 +22,19 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * OpenAI GPT-4o-mini provider implementation.
- * Activated when ai.provider=openai (default).
+ * Google Gemini provider implementation.
+ * Activated when ai.provider=gemini.
+ *
+ * API docs: https://ai.google.dev/api/generate-content
  */
 @Component
-@ConditionalOnProperty(name = "ai.provider", havingValue = "openai", matchIfMissing = true)
+@ConditionalOnProperty(name = "ai.provider", havingValue = "gemini")
 @RequiredArgsConstructor
 @Slf4j
-public class OpenAiProvider implements AiProvider {
+public class GeminiProvider implements AiProvider {
 
-    private static final String OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
+    private static final String GEMINI_API_URL =
+            "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}";
 
     // Concise prompt to minimize token usage
     private static final String SYSTEM_PROMPT =
@@ -42,21 +45,23 @@ public class OpenAiProvider implements AiProvider {
             "documentation (markdown string), techStack (string[]), decisions (string[]). " +
             "No markdown fences, no extra text outside the JSON.";
 
-    /** Extracts seconds from OpenAI's rate-limit header/body: "Please try again in Xs" */
+    /** Extracts seconds from Gemini's rate-limit message: "Please retry in Xs" */
     private static final Pattern RETRY_SECONDS_PATTERN =
-            Pattern.compile("try again in ([\\d.]+)s");
+            Pattern.compile("retry in ([\\d.]+)s");
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${openai.api-key}")
+    @Value("${gemini.api-key}")
     private String apiKey;
 
-    @Value("${openai.model:gpt-4o-mini}")
+    @Value("${gemini.model:gemini-2.0-flash}")
     private String model;
 
-    @Value("${openai.max-retries:1}")
+    @Value("${gemini.max-retries:1}")
     private int maxRetries;
+
+    // ── AiProvider ────────────────────────────────────────────────────────────
 
     @Override
     public ArchitectureOutput generate(ArchitectureInput input) {
@@ -65,73 +70,79 @@ public class OpenAiProvider implements AiProvider {
 
         for (int attempt = 1; attempt <= maxRetries + 1; attempt++) {
             try {
-                log.info("Calling OpenAI API (attempt {}/{}), model: {}", attempt, maxRetries + 1, model);
-                String content = callOpenAi(userPrompt);
+                log.info("Calling Gemini API (attempt {}/{}), model: {}", attempt, maxRetries + 1, model);
+                String content = callGemini(userPrompt);
                 return parseResponse(content);
             } catch (RateLimitException e) {
-                lastException = new AiProviderException("OpenAI rate limited: " + e.getMessage());
+                lastException = new AiProviderException("Gemini rate limited: " + e.getMessage());
                 if (attempt <= maxRetries) {
                     long waitMs = e.retryAfterMs + 2000L;
-                    log.warn("OpenAI rate limited (attempt {}). Waiting {}ms before retry...", attempt, waitMs);
+                    log.warn("Gemini rate limited (attempt {}). Waiting {}ms before retry...", attempt, waitMs);
                     sleep(waitMs);
                 } else {
-                    log.error("OpenAI rate limited on all {} attempts. Giving up.", maxRetries + 1);
+                    log.error("Gemini rate limited on all {} attempts. Giving up.", maxRetries + 1);
                 }
             } catch (AiProviderException e) {
                 lastException = e;
-                log.warn("OpenAI attempt {} failed: {}", attempt, e.getMessage());
+                log.warn("Gemini attempt {} failed: {}", attempt, e.getMessage());
                 if (attempt <= maxRetries) {
                     sleep(1000L * attempt);
                 }
             }
         }
         throw lastException != null ? lastException
-                : new AiProviderException("OpenAI failed after " + (maxRetries + 1) + " attempts");
+                : new AiProviderException("Gemini failed after " + (maxRetries + 1) + " attempts");
     }
 
-    private String callOpenAi(String userPrompt) {
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private String callGemini(String userPrompt) {
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.setBearerAuth(apiKey);
 
-        OpenAiRequest body = OpenAiRequest.builder()
-                .model(model)
-                .messages(List.of(
-                        new OpenAiMessage("system", SYSTEM_PROMPT),
-                        new OpenAiMessage("user", userPrompt)
-                ))
-                .temperature(0.3)
-                .maxTokens(1024)
+        GeminiRequest body = GeminiRequest.builder()
+                .systemInstruction(new GeminiSystemInstruction(
+                        List.of(new GeminiPart(SYSTEM_PROMPT))))
+                .contents(List.of(new GeminiContent(
+                        "user",
+                        List.of(new GeminiPart(userPrompt)))))
+                .generationConfig(GeminiGenerationConfig.builder()
+                        .temperature(0.3)
+                        .maxOutputTokens(1024)
+                        .responseMimeType("application/json")
+                        .build())
                 .build();
 
         try {
             ResponseEntity<JsonNode> response = restTemplate.exchange(
-                    OPENAI_API_URL, HttpMethod.POST,
+                    GEMINI_API_URL,
+                    HttpMethod.POST,
                     new HttpEntity<>(body, headers),
-                    JsonNode.class);
+                    JsonNode.class,
+                    model, apiKey);
 
             if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
-                throw new AiProviderException("OpenAI returned status: " + response.getStatusCode());
+                throw new AiProviderException("Gemini returned status: " + response.getStatusCode());
             }
 
             String content = response.getBody()
-                    .path("choices").path(0)
-                    .path("message").path("content")
-                    .asText("");
+                    .path("candidates").path(0)
+                    .path("content").path("parts").path(0)
+                    .path("text").asText("");
 
             if (content.isBlank()) {
-                throw new AiProviderException("OpenAI returned empty content");
+                throw new AiProviderException("Gemini returned empty content");
             }
             return content;
 
         } catch (HttpClientErrorException.TooManyRequests e) {
             long retryMs = parseRetryDelayMs(e.getResponseBodyAsString());
-            log.warn("OpenAI 429 — suggested retry delay: {}ms", retryMs);
+            log.warn("Gemini 429 — suggested retry delay: {}ms", retryMs);
             throw new RateLimitException(e.getMessage(), retryMs);
         } catch (AiProviderException | RateLimitException e) {
             throw e;
         } catch (Exception e) {
-            throw new AiProviderException("Network/API error calling OpenAI: " + e.getMessage(), e);
+            throw new AiProviderException("Network/API error calling Gemini: " + e.getMessage(), e);
         }
     }
 
@@ -149,9 +160,8 @@ public class OpenAiProvider implements AiProvider {
     }
 
     private ArchitectureOutput parseResponse(String rawContent) {
-        String json = stripMarkdownFences(rawContent);
         try {
-            JsonNode node = objectMapper.readTree(json);
+            JsonNode node = objectMapper.readTree(rawContent);
             return ArchitectureOutput.builder()
                     .style(node.path("style").asText(""))
                     .qualityAttributes(parseList(node.path("qualityAttributes")))
@@ -161,17 +171,8 @@ public class OpenAiProvider implements AiProvider {
                     .decisions(parseList(node.path("decisions")))
                     .build();
         } catch (Exception e) {
-            throw new AiProviderException("Failed to parse OpenAI JSON response: " + e.getMessage(), e);
+            throw new AiProviderException("Failed to parse Gemini JSON response: " + e.getMessage(), e);
         }
-    }
-
-    private String stripMarkdownFences(String content) {
-        String trimmed = content.strip();
-        if (trimmed.startsWith("```")) {
-            trimmed = trimmed.replaceFirst("```[a-zA-Z]*\\n?", "");
-            trimmed = trimmed.replaceAll("\\n?```$", "").strip();
-        }
-        return trimmed;
     }
 
     private String buildUserPrompt(ArchitectureInput input) {
