@@ -18,15 +18,13 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Groq AI provider implementation (OpenAI-compatible API).
+ * Groq AI provider (OpenAI-compatible API).
  * Activated when ai.provider=groq.
  *
- * Free tier: ~6,000 TPM for llama-3.1-8b-instant — no credit card required.
- * API docs: https://console.groq.com/docs/openai
+ * Free tier: 14,400 req/day, 6,000 TPM — no credit card required.
+ * Best free alternative when OpenAI has no credits.
  */
 @Component
 @ConditionalOnProperty(name = "ai.provider", havingValue = "groq")
@@ -36,18 +34,14 @@ public class GroqProvider implements AiProvider {
 
     private static final String GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
 
-    // Concise prompt (~250 tokens vs ~800 before) to stay within 6,000 TPM free limit
     private static final String SYSTEM_PROMPT =
-            "You are a software architect. Given domain, quality attributes and tech constraints, " +
-            "return ONLY a valid JSON with these fields: " +
+            "You are a software architect. Return ONLY a valid JSON object with these fields: " +
             "style (string), qualityAttributes (string[]), " +
-            "diagrams (object: diagram name -> PlantUML/Mermaid code), " +
+            "diagrams (object: diagram name -> PlantUML code using @startuml/@enduml syntax ONLY), " +
             "documentation (markdown string), techStack (string[]), decisions (string[]). " +
-            "No markdown fences, no extra text outside the JSON.";
-
-    /** Extracts seconds from Groq's rate-limit message: "Please try again in X.XXXs" */
-    private static final Pattern RETRY_SECONDS_PATTERN =
-            Pattern.compile("try again in ([\\d.]+)s");
+            "IMPORTANT: All JSON string values must be properly escaped. " +
+            "Diagrams must use PlantUML syntax starting with @startuml. " +
+            "Output ONLY the JSON object, no markdown fences, no extra text.";
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -58,41 +52,16 @@ public class GroqProvider implements AiProvider {
     @Value("${groq.model:llama-3.1-8b-instant}")
     private String model;
 
-    @Value("${groq.max-retries:1}")  // 1 retry: fewer = less quota burned
-    private int maxRetries;
-
     // ── AiProvider ────────────────────────────────────────────────────────────
 
+    /**
+     * Single attempt — no retries. Errors propagate immediately to the caller.
+     */
     @Override
     public ArchitectureOutput generate(ArchitectureInput input) {
-        String userPrompt = buildUserPrompt(input);
-        AiProviderException lastException = null;
-
-        for (int attempt = 1; attempt <= maxRetries + 1; attempt++) {
-            try {
-                log.info("Calling Groq API (attempt {}/{}), model: {}", attempt, maxRetries + 1, model);
-                String content = callGroq(userPrompt);
-                return parseResponse(content);
-            } catch (RateLimitException e) {
-                // 429: wait exactly what Groq tells us + 2s buffer, then retry
-                lastException = new AiProviderException("Groq rate limited: " + e.getMessage());
-                if (attempt <= maxRetries) {
-                    long waitMs = e.retryAfterMs + 2000L;
-                    log.warn("Groq rate limited (attempt {}). Waiting {}ms before retry...", attempt, waitMs);
-                    sleep(waitMs);
-                } else {
-                    log.error("Groq rate limited on all {} attempts. Giving up.", maxRetries + 1);
-                }
-            } catch (AiProviderException e) {
-                lastException = e;
-                log.warn("Groq attempt {} failed: {}", attempt, e.getMessage());
-                if (attempt <= maxRetries) {
-                    sleep(1000L * attempt);
-                }
-            }
-        }
-        throw lastException != null ? lastException
-                : new AiProviderException("Groq failed after " + (maxRetries + 1) + " attempts");
+        log.info("Calling Groq API, model: {}", model);
+        String content = callGroq(buildUserPrompt(input));
+        return parseResponse(content);
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
@@ -109,13 +78,13 @@ public class GroqProvider implements AiProvider {
                         new OpenAiMessage("user", userPrompt)
                 ))
                 .temperature(0.3)
-                .maxTokens(512)  // keep within 6,000 TPM free tier
+                .maxTokens(1024)
+                .responseFormat(Map.of("type", "json_object"))  // Forces valid JSON output
                 .build();
 
         try {
             ResponseEntity<JsonNode> response = restTemplate.exchange(
-                    GROQ_API_URL,
-                    HttpMethod.POST,
+                    GROQ_API_URL, HttpMethod.POST,
                     new HttpEntity<>(body, headers),
                     JsonNode.class);
 
@@ -134,35 +103,19 @@ public class GroqProvider implements AiProvider {
             return content;
 
         } catch (HttpClientErrorException.TooManyRequests e) {
-            // Parse the exact retry delay Groq suggests and propagate it
-            long retryMs = parseRetryDelayMs(e.getResponseBodyAsString());
-            log.warn("Groq 429 — suggested retry delay: {}ms", retryMs);
-            throw new RateLimitException(e.getMessage(), retryMs);
+            throw new AiProviderException(
+                "Groq rate limit exceeded (429). Free tier: 6,000 TPM / 30 RPM. " +
+                "Wait 1 minute and retry. Error: " + e.getResponseBodyAsString(), e);
 
-        } catch (AiProviderException | RateLimitException e) {
+        } catch (HttpClientErrorException e) {
+            throw new AiProviderException(
+                "Groq HTTP error " + e.getStatusCode() + ": " + e.getResponseBodyAsString(), e);
+
+        } catch (AiProviderException e) {
             throw e;
         } catch (Exception e) {
             throw new AiProviderException("Network/API error calling Groq: " + e.getMessage(), e);
         }
-    }
-
-    /**
-     * Extracts the retry delay (ms) from Groq's 429 body.
-     * Falls back to 60 seconds if the pattern is not found.
-     */
-    private long parseRetryDelayMs(String responseBody) {
-        if (responseBody != null) {
-            Matcher m = RETRY_SECONDS_PATTERN.matcher(responseBody);
-            if (m.find()) {
-                try {
-                    double seconds = Double.parseDouble(m.group(1));
-                    // Ensure we wait at least 62s so the full 1-min TPM window resets
-                    long parsed = (long) (seconds * 1000);
-                    return Math.max(parsed, 62_000L);
-                } catch (NumberFormatException ignored) { }
-            }
-        }
-        return 62_000L; // default: wait full window reset
     }
 
     private ArchitectureOutput parseResponse(String rawContent) {
@@ -173,6 +126,7 @@ public class GroqProvider implements AiProvider {
                     .style(node.path("style").asText(""))
                     .qualityAttributes(parseList(node.path("qualityAttributes")))
                     .diagrams(parseMap(node.path("diagrams")))
+                    .diagramUrls(null)  // populated by GenerateArchitectureUseCase
                     .documentation(node.path("documentation").asText(""))
                     .techStack(parseList(node.path("techStack")))
                     .decisions(parseList(node.path("decisions")))
@@ -218,18 +172,5 @@ public class GroqProvider implements AiProvider {
         Map<String, String> map = new LinkedHashMap<>();
         if (node.isObject()) node.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue().asText()));
         return map;
-    }
-
-    private void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-    }
-
-    /** Internal exception carrying the rate-limit retry delay. */
-    private static class RateLimitException extends RuntimeException {
-        final long retryAfterMs;
-        RateLimitException(String message, long retryAfterMs) {
-            super(message);
-            this.retryAfterMs = retryAfterMs;
-        }
     }
 }

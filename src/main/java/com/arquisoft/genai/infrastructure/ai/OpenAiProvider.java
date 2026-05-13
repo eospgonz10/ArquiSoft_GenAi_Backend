@@ -18,12 +18,14 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * OpenAI GPT-4o-mini provider implementation.
+ * OpenAI GPT-4o-mini provider.
  * Activated when ai.provider=openai (default).
+ *
+ * IMPORTANT: gpt-4o-mini requires a paid OpenAI account (Tier 1+, min $5 credit).
+ * The free tier does NOT support this model.
+ * To use a free alternative, switch AI_PROVIDER=groq in .env.
  */
 @Component
 @ConditionalOnProperty(name = "ai.provider", havingValue = "openai", matchIfMissing = true)
@@ -33,18 +35,14 @@ public class OpenAiProvider implements AiProvider {
 
     private static final String OPENAI_API_URL = "https://api.openai.com/v1/chat/completions";
 
-    // Concise prompt to minimize token usage
     private static final String SYSTEM_PROMPT =
             "You are a software architect. Given domain, quality attributes and tech constraints, " +
             "return ONLY a valid JSON with these fields: " +
             "style (string), qualityAttributes (string[]), " +
-            "diagrams (object: diagram name -> PlantUML/Mermaid code), " +
+            "diagrams (object: diagram name -> PlantUML code using @startuml/@enduml syntax ONLY), " +
             "documentation (markdown string), techStack (string[]), decisions (string[]). " +
+            "IMPORTANT: diagrams must use PlantUML syntax starting with @startuml. " +
             "No markdown fences, no extra text outside the JSON.";
-
-    /** Extracts seconds from OpenAI's rate-limit header/body: "Please try again in Xs" */
-    private static final Pattern RETRY_SECONDS_PATTERN =
-            Pattern.compile("try again in ([\\d.]+)s");
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -55,39 +53,20 @@ public class OpenAiProvider implements AiProvider {
     @Value("${openai.model:gpt-4o-mini}")
     private String model;
 
-    @Value("${openai.max-retries:1}")
-    private int maxRetries;
+    // ── AiProvider ────────────────────────────────────────────────────────────
 
+    /**
+     * Single attempt — no retries. Errors propagate immediately to the caller.
+     * The timeout is controlled by RestTemplateConfig (AI_READ_TIMEOUT_SECONDS).
+     */
     @Override
     public ArchitectureOutput generate(ArchitectureInput input) {
-        String userPrompt = buildUserPrompt(input);
-        AiProviderException lastException = null;
-
-        for (int attempt = 1; attempt <= maxRetries + 1; attempt++) {
-            try {
-                log.info("Calling OpenAI API (attempt {}/{}), model: {}", attempt, maxRetries + 1, model);
-                String content = callOpenAi(userPrompt);
-                return parseResponse(content);
-            } catch (RateLimitException e) {
-                lastException = new AiProviderException("OpenAI rate limited: " + e.getMessage());
-                if (attempt <= maxRetries) {
-                    long waitMs = e.retryAfterMs + 2000L;
-                    log.warn("OpenAI rate limited (attempt {}). Waiting {}ms before retry...", attempt, waitMs);
-                    sleep(waitMs);
-                } else {
-                    log.error("OpenAI rate limited on all {} attempts. Giving up.", maxRetries + 1);
-                }
-            } catch (AiProviderException e) {
-                lastException = e;
-                log.warn("OpenAI attempt {} failed: {}", attempt, e.getMessage());
-                if (attempt <= maxRetries) {
-                    sleep(1000L * attempt);
-                }
-            }
-        }
-        throw lastException != null ? lastException
-                : new AiProviderException("OpenAI failed after " + (maxRetries + 1) + " attempts");
+        log.info("Calling OpenAI API, model: {}", model);
+        String content = callOpenAi(buildUserPrompt(input));
+        return parseResponse(content);
     }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
 
     private String callOpenAi(String userPrompt) {
         HttpHeaders headers = new HttpHeaders();
@@ -125,27 +104,21 @@ public class OpenAiProvider implements AiProvider {
             return content;
 
         } catch (HttpClientErrorException.TooManyRequests e) {
-            long retryMs = parseRetryDelayMs(e.getResponseBodyAsString());
-            log.warn("OpenAI 429 — suggested retry delay: {}ms", retryMs);
-            throw new RateLimitException(e.getMessage(), retryMs);
-        } catch (AiProviderException | RateLimitException e) {
+            throw new AiProviderException(
+                "OpenAI rate limit exceeded (429). " +
+                "If on free tier, gpt-4o-mini is not available without payment. " +
+                "Consider switching AI_PROVIDER=groq for a free alternative. " +
+                "Error: " + e.getResponseBodyAsString(), e);
+
+        } catch (HttpClientErrorException e) {
+            throw new AiProviderException(
+                "OpenAI HTTP error " + e.getStatusCode() + ": " + e.getResponseBodyAsString(), e);
+
+        } catch (AiProviderException e) {
             throw e;
         } catch (Exception e) {
             throw new AiProviderException("Network/API error calling OpenAI: " + e.getMessage(), e);
         }
-    }
-
-    private long parseRetryDelayMs(String responseBody) {
-        if (responseBody != null) {
-            Matcher m = RETRY_SECONDS_PATTERN.matcher(responseBody);
-            if (m.find()) {
-                try {
-                    double seconds = Double.parseDouble(m.group(1));
-                    return Math.max((long) (seconds * 1000), 62_000L);
-                } catch (NumberFormatException ignored) { }
-            }
-        }
-        return 62_000L;
     }
 
     private ArchitectureOutput parseResponse(String rawContent) {
@@ -156,6 +129,7 @@ public class OpenAiProvider implements AiProvider {
                     .style(node.path("style").asText(""))
                     .qualityAttributes(parseList(node.path("qualityAttributes")))
                     .diagrams(parseMap(node.path("diagrams")))
+                    .diagramUrls(null)  // populated by GenerateArchitectureUseCase
                     .documentation(node.path("documentation").asText(""))
                     .techStack(parseList(node.path("techStack")))
                     .decisions(parseList(node.path("decisions")))
@@ -201,17 +175,5 @@ public class OpenAiProvider implements AiProvider {
         Map<String, String> map = new LinkedHashMap<>();
         if (node.isObject()) node.fields().forEachRemaining(e -> map.put(e.getKey(), e.getValue().asText()));
         return map;
-    }
-
-    private void sleep(long ms) {
-        try { Thread.sleep(ms); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-    }
-
-    private static class RateLimitException extends RuntimeException {
-        final long retryAfterMs;
-        RateLimitException(String message, long retryAfterMs) {
-            super(message);
-            this.retryAfterMs = retryAfterMs;
-        }
     }
 }

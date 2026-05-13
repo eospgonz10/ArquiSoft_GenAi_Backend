@@ -24,6 +24,7 @@ public class SecurityConfig {
     private static final String[] PUBLIC_PATHS = {
             "/api/auth/**",
             "/api/health",
+            "/api/diagrams/**",       // diagram images — no auth needed for <img src>
             "/swagger-ui/**",
             "/swagger-ui.html",
             "/v3/api-docs/**",

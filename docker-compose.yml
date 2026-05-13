@@ -46,7 +46,14 @@ services:
       # Groq — free tier, 14400 req/day (recommended)
       GROQ_API_KEY: ${GROQ_API_KEY:-your-groq-api-key-here}
       GROQ_MODEL: ${GROQ_MODEL:-llama-3.3-70b-versatile}
-      AI_PROVIDER: ${AI_PROVIDER:-groq}
+      # AI Provider config
+      AI_PROVIDER: ${AI_PROVIDER:-openai}   # openai (paid) | groq (free) | gemini | mock
+      AI_CONNECT_TIMEOUT_SECONDS: ${AI_CONNECT_TIMEOUT_SECONDS:-10}
+      AI_READ_TIMEOUT_SECONDS: ${AI_READ_TIMEOUT_SECONDS:-90}
+      # Diagram storage
+      DIAGRAMS_DIR: /app/diagrams
+    volumes:
+      - diagrams_data:/app/diagrams
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/health || exit 1"]
       interval: 30s
@@ -56,3 +63,4 @@ services:
 
 volumes:
   postgres_data:
+  diagrams_data:

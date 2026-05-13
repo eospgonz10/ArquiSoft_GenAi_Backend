@@ -14,7 +14,15 @@ import java.util.Map;
 public class ArchitectureOutput {
     String style;
     List<String> qualityAttributes;
+    /** Diagram source code (PlantUML) keyed by diagram name. */
     Map<String, String> diagrams;
+    /**
+     * Rendered diagram URLs keyed by diagram name.
+     * Values are relative paths like "/api/diagrams/{generationId}/{name}.png"
+     * that the frontend can use directly as <img src="..."> after prepending the backend base URL.
+     * Populated by GenerateArchitectureUseCase after AI generation.
+     */
+    Map<String, String> diagramUrls;
     String documentation;
     List<String> techStack;
     List<String> decisions;

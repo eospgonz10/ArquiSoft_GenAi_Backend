@@ -37,6 +37,7 @@ public class MockAiProvider implements AiProvider {
                 .style("Microservices")
                 .qualityAttributes(qaList)
                 .diagrams(diagrams)
+                .diagramUrls(null)  // populated by GenerateArchitectureUseCase after rendering
                 .documentation(buildDocumentation(input.getDomain()))
                 .techStack(List.of("Java 17", "Spring Boot 3", "PostgreSQL 15", "Docker", "JWT", "Redis"))
                 .decisions(List.of(
