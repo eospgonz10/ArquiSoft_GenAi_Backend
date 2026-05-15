@@ -3,6 +3,7 @@ package com.arquisoft.genai.application.usecase;
 import com.arquisoft.genai.application.model.ArchitectureInput;
 import com.arquisoft.genai.application.model.ArchitectureOutput;
 import com.arquisoft.genai.application.port.AiProvider;
+import com.arquisoft.genai.application.service.AiGenerationCoordinator;
 import com.arquisoft.genai.application.validation.ArchitectureResponseValidator;
 import com.arquisoft.genai.infrastructure.diagram.DiagramRendererService;
 import lombok.RequiredArgsConstructor;
@@ -20,8 +21,13 @@ public class GenerateArchitectureUseCase {
     private final AiProvider aiProvider;
     private final ArchitectureResponseValidator validator;
     private final DiagramRendererService diagramRenderer;
+        private final AiGenerationCoordinator aiGenerationCoordinator;
 
     public ArchitectureOutput generate(ArchitectureInput input) {
+                return aiGenerationCoordinator.execute(input, () -> doGenerate(input));
+        }
+
+        private ArchitectureOutput doGenerate(ArchitectureInput input) {
         log.info("Generating architecture for domain: '{}'", input.getDomain());
 
         // 1. Call AI provider — single attempt, errors propagate as AiProviderException
@@ -39,6 +45,7 @@ public class GenerateArchitectureUseCase {
         return ArchitectureOutput.builder()
                 .style(validated.getStyle())
                 .qualityAttributes(validated.getQualityAttributes())
+                .generationId(generationId)
                 .diagrams(validated.getDiagrams())
                 .diagramUrls(diagramUrls)
                 .documentation(validated.getDocumentation())

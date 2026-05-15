@@ -2,6 +2,7 @@ package com.arquisoft.genai.infrastructure.config;
 
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.servers.Server;
 import io.swagger.v3.oas.models.info.Contact;
 import io.swagger.v3.oas.models.info.Info;
 import io.swagger.v3.oas.models.info.License;
@@ -35,6 +36,7 @@ public class OpenApiConfig {
                                 .name("ArquiSoft Team")
                                 .email("contact@arquisoft.com"))
                         .license(new License().name("MIT")))
+                .servers(java.util.List.of(new Server().url("/")))
                 .addSecurityItem(new SecurityRequirement().addList(securitySchemeName))
                 .components(new Components()
                         .addSecuritySchemes(securitySchemeName,

@@ -19,6 +19,7 @@ spring:
 
 server:
   port: ${SERVER_PORT:8080}
+  forward-headers-strategy: framework
   error:
     include-message: always
     include-binding-errors: always
@@ -31,9 +32,30 @@ openai:
   api-key: ${OPENAI_API_KEY:your-openai-api-key-here}
   model: ${OPENAI_MODEL:gpt-4o-mini}
   max-retries: ${OPENAI_MAX_RETRIES:2}
+  # NOTE: gpt-4o-mini requires paid OpenAI account (Tier 1+). Free tier does NOT work.
+
+gemini:
+  api-key: ${GEMINI_API_KEY:your-gemini-api-key-here}
+  model: ${GEMINI_MODEL:gemini-2.0-flash}
+  max-retries: ${GEMINI_MAX_RETRIES:1}
+
+groq:
+  api-key: ${GROQ_API_KEY:your-groq-api-key-here}
+  model: ${GROQ_MODEL:llama-3.1-8b-instant}
+  max-retries: ${GROQ_MAX_RETRIES:1}
 
 ai:
-  provider: ${AI_PROVIDER:openai}  # 'openai' or 'mock'
+  provider: ${AI_PROVIDER:openai}  # options: openai (paid), groq (free), gemini, mock
+  max-concurrent-requests: ${AI_MAX_CONCURRENT_REQUESTS:1}
+  request-cache-ttl-seconds: ${AI_REQUEST_CACHE_TTL_SECONDS:300}
+  circuit-breaker-failure-threshold: ${AI_CIRCUIT_BREAKER_FAILURE_THRESHOLD:3}
+  circuit-breaker-open-seconds: ${AI_CIRCUIT_BREAKER_OPEN_SECONDS:60}
+  http:
+    connect-timeout-seconds: ${AI_CONNECT_TIMEOUT_SECONDS:10}
+    read-timeout-seconds: ${AI_READ_TIMEOUT_SECONDS:90}  # 90s — covers all normal AI response times
+
+app:
+  diagrams-dir: ${DIAGRAMS_DIR:./diagrams}  # Local storage path for generated PNG diagrams
 
 springdoc:
   api-docs:

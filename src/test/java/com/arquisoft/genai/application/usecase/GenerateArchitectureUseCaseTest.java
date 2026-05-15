@@ -3,7 +3,9 @@ package com.arquisoft.genai.application.usecase;
 import com.arquisoft.genai.application.model.ArchitectureInput;
 import com.arquisoft.genai.application.model.ArchitectureOutput;
 import com.arquisoft.genai.application.port.AiProvider;
+import com.arquisoft.genai.application.service.AiGenerationCoordinator;
 import com.arquisoft.genai.application.validation.ArchitectureResponseValidator;
+import com.arquisoft.genai.infrastructure.diagram.DiagramRendererService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -13,6 +15,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.BDDMockito.*;
@@ -23,6 +26,8 @@ class GenerateArchitectureUseCaseTest {
 
     @Mock private AiProvider aiProvider;
     @Mock private ArchitectureResponseValidator validator;
+    @Mock private AiGenerationCoordinator aiGenerationCoordinator;
+    @Mock private DiagramRendererService diagramRenderer;
 
     @InjectMocks private GenerateArchitectureUseCase useCase;
 
@@ -46,10 +51,24 @@ class GenerateArchitectureUseCaseTest {
                 .build();
 
         ArchitectureOutput providerOutput = buildValidOutput();
-        ArchitectureOutput validatedOutput = buildValidOutput();
+        ArchitectureOutput validatedOutput = ArchitectureOutput.builder()
+            .style("Microservices")
+            .qualityAttributes(List.of("security", "scalability"))
+            .diagrams(Map.of("C4-Context", "@startuml\n...\n@enduml"))
+            .diagramUrls(Map.of("C4-Context", "/api/diagrams/test/C4-Context.png"))
+            .documentation("# Architecture\nDetails here.")
+            .techStack(List.of("Java 17", "Spring Boot 3"))
+            .decisions(List.of("Use JWT for auth"))
+            .build();
 
         given(aiProvider.generate(input)).willReturn(providerOutput);
         given(validator.validate(providerOutput)).willReturn(validatedOutput);
+        given(diagramRenderer.renderAndSave(anyMap(), anyString())).willReturn(Map.of("C4-Context", "/api/diagrams/test/C4-Context.png"));
+        given(aiGenerationCoordinator.execute(eq(input), any())).willAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Supplier<ArchitectureOutput> supplier = invocation.getArgument(1, Supplier.class);
+            return supplier.get();
+        });
 
         ArchitectureOutput result = useCase.generate(input);
 
@@ -66,6 +85,12 @@ class GenerateArchitectureUseCaseTest {
 
         given(aiProvider.generate(input)).willReturn(output);
         given(validator.validate(output)).willReturn(output);
+        given(diagramRenderer.renderAndSave(anyMap(), anyString())).willReturn(Map.of("C4-Context", "/api/diagrams/test/C4-Context.png"));
+        given(aiGenerationCoordinator.execute(eq(input), any())).willAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Supplier<ArchitectureOutput> supplier = invocation.getArgument(1, Supplier.class);
+            return supplier.get();
+        });
 
         ArchitectureOutput result = useCase.generate(input);
 

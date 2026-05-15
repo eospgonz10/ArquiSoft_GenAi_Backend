@@ -214,6 +214,19 @@ Switch between providers using the `AI_PROVIDER` environment variable:
 AI_PROVIDER=mock docker-compose up
 ```
 
+### AI Consumption Controls
+
+The backend now applies a conservative execution policy to reduce duplicate AI cost:
+
+- One in-flight generation per normalized request payload.
+- Short-lived cache for identical successful requests.
+- Concurrency cap configured by `AI_MAX_CONCURRENT_REQUESTS`.
+- Limited exponential backoff only for transient failures such as timeouts or 5xx responses.
+- No automatic retries for `429` responses from the provider.
+- Circuit breaker that pauses new generations after repeated failures.
+
+If OpenAI returns `429`, the response now includes rate-limit metadata when the provider sends it, which helps distinguish burst traffic, RPM/TPM pressure, and quota exhaustion.
+
 ---
 
 ## Stage 6 – History (Planned)

@@ -1,3 +1,4 @@
-com\arquisoft\genai\infrastructure\ai\OpenAiProviderTest.class
-com\arquisoft\genai\application\usecase\AuthUseCaseTest.class
-com\arquisoft\genai\application\usecase\GenerateArchitectureUseCaseTest.class
+com/arquisoft/genai/application/usecase/AuthUseCaseTest.class
+com/arquisoft/genai/application/service/AiGenerationCoordinatorTest.class
+com/arquisoft/genai/infrastructure/ai/OpenAiProviderTest.class
+com/arquisoft/genai/application/usecase/GenerateArchitectureUseCaseTest.class

@@ -13,8 +13,8 @@ import org.springframework.stereotype.Component;
 
 @Generated(
     value = "org.mapstruct.ap.MappingProcessor",
-    date = "2026-04-08T20:09:30-0500",
-    comments = "version: 1.5.5.Final, compiler: javac, environment: Java 17.0.9 (Oracle Corporation)"
+    date = "2026-05-15T22:38:28+0000",
+    comments = "version: 1.5.5.Final, compiler: javac, environment: Java 21.0.10 (Microsoft)"
 )
 @Component
 public class ArchitectureMapperImpl implements ArchitectureMapper {
@@ -58,6 +58,10 @@ public class ArchitectureMapperImpl implements ArchitectureMapper {
         if ( map != null ) {
             architectureResponse.diagrams( new LinkedHashMap<String, String>( map ) );
         }
+        Map<String, String> map1 = output.getDiagramUrls();
+        if ( map1 != null ) {
+            architectureResponse.diagramUrls( new LinkedHashMap<String, String>( map1 ) );
+        }
         architectureResponse.documentation( output.getDocumentation() );
         List<String> list1 = output.getTechStack();
         if ( list1 != null ) {
@@ -67,6 +71,7 @@ public class ArchitectureMapperImpl implements ArchitectureMapper {
         if ( list2 != null ) {
             architectureResponse.decisions( new ArrayList<String>( list2 ) );
         }
+        architectureResponse.generationId( output.getGenerationId() );
 
         return architectureResponse.build();
     }

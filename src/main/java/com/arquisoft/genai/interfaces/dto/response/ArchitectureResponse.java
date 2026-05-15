@@ -43,6 +43,10 @@ public class ArchitectureResponse {
             example = "[\"Java 17\", \"Spring Boot 3\", \"PostgreSQL\"]")
     private List<String> techStack;
 
-    @Schema(description = "Key architectural decisions with justifications")
-    private List<String> decisions;
+        @Schema(description = "Key architectural decisions with justifications")
+        private List<String> decisions;
+
+        /** Identifier used to group rendered diagrams for a single generation. */
+        @Schema(description = "Unique identifier for the generation of diagrams", example = "gen-12345")
+        private String generationId;
 }

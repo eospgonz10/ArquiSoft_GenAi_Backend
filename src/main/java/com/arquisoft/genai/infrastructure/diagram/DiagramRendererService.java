@@ -52,7 +52,7 @@ public class DiagramRendererService {
                 urls.put(name, url);
                 log.debug("Rendered diagram '{}' → {}", name, url);
             } catch (Exception e) {
-                log.warn("Failed to render diagram '{}': {}. Skipping.", name, e.getMessage());
+                log.warn("Failed to render diagram '{}' — skipping.", name, e);
             }
         }
         return urls;

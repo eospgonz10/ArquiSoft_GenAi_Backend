@@ -1,6 +1,7 @@
 package com.arquisoft.genai.interfaces.exception;
 
 import com.arquisoft.genai.application.exception.AiProviderException;
+import com.arquisoft.genai.application.exception.AiRateLimitException;
 import com.arquisoft.genai.application.exception.ArchitectureValidationException;
 import com.arquisoft.genai.application.exception.InvalidCredentialsException;
 import com.arquisoft.genai.application.exception.UserAlreadyExistsException;
@@ -45,6 +46,19 @@ public class GlobalExceptionHandler {
         ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_GATEWAY, ex.getMessage());
         pd.setTitle("AI Provider Error");
         pd.setProperty("timestamp", Instant.now());
+        return pd;
+    }
+
+    @ExceptionHandler(AiRateLimitException.class)
+    public ProblemDetail handleAiRateLimit(AiRateLimitException ex) {
+        log.warn("AI rate limit hit for provider {}: {}", ex.getProvider(), ex.getMessage());
+        ProblemDetail pd = ProblemDetail.forStatusAndDetail(HttpStatus.TOO_MANY_REQUESTS, ex.getMessage());
+        pd.setTitle("AI Rate Limit Exceeded");
+        pd.setProperty("timestamp", Instant.now());
+        pd.setProperty("provider", ex.getProvider());
+        pd.setProperty("statusCode", ex.getStatusCode());
+        pd.setProperty("retryAfterSeconds", ex.getRetryAfterSeconds());
+        pd.setProperty("rateLimitHeaders", ex.getRateLimitHeaders());
         return pd;
     }
 

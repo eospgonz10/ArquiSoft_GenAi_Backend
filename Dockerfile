@@ -11,8 +11,16 @@ RUN mvn clean package -DskipTests -B
 FROM eclipse-temurin:17-jre-alpine
 WORKDIR /app
 
+# Install Graphviz (required by PlantUML for some diagram types)
+RUN apk add --no-cache graphviz
+
 # Non-root user for security
-RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+# Create diagrams directory and ensure ownership so the non-root user can write
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup \
+  && mkdir -p /app/diagrams \
+  && chown -R appuser:appgroup /app/diagrams
+
+# Switch to non-root user
 USER appuser
 
 COPY --from=builder /app/target/*.jar app.jar

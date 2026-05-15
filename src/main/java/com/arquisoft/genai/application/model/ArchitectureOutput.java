@@ -14,6 +14,8 @@ import java.util.Map;
 public class ArchitectureOutput {
     String style;
     List<String> qualityAttributes;
+        /** Identifier used to group rendered diagrams for a single generation. */
+        String generationId;
     /** Diagram source code (PlantUML) keyed by diagram name. */
     Map<String, String> diagrams;
     /**
